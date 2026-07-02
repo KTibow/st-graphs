@@ -1,3 +1,5 @@
+import protobuf from 'protobufjs'
+import protoText from './gtfs-realtime.proto?raw'
 import type {
   ObaResponse,
   RouteEntry,
@@ -103,12 +105,6 @@ function pickBetterTrip(a: TripScheduleEntry, b: TripScheduleEntry): TripSchedul
   return score(a) >= score(b) ? a : b
 }
 
-// ── Single trip details (for polling) ──
-export async function fetchTripDetails(tripId: string): Promise<TripScheduleEntry> {
-  const data = await fetchOba<{ entry: TripScheduleEntry }>(`/trip-details/${tripId}.json`)
-  return data.entry
-}
-
 // ── All vehicles for agency ──
 export async function fetchAllVehicles(): Promise<VehicleEntry[]> {
   const data = await fetchOba<{ list: VehicleEntry[] }>(`/vehicles-for-agency/${AGENCY}.json`)
@@ -117,6 +113,73 @@ export async function fetchAllVehicles(): Promise<VehicleEntry[]> {
 
 // ── Stop details are embedded in the route shape response (references.stops) ──
 // No separate fetch needed. Just parse from the shape response above.
+
+// ── Protobuf trip-updates (per-stop predictions) ──
+
+let _FeedMessage: protobuf.Type | null = null
+
+function getFeedType(): protobuf.Type {
+  if (!_FeedMessage) {
+    const root = protobuf.parse(protoText).root
+    _FeedMessage = root.lookupType('transit_realtime.FeedMessage')
+  }
+  return _FeedMessage
+}
+
+export interface ProtoStopPrediction {
+  stopId: string             // raw stop id, no agency prefix
+  predictedArrival: number   // epoch ms
+  predictedDeparture: number // epoch ms
+}
+
+export interface ProtobufSnapshot {
+  predictions: Map<string, ProtoStopPrediction>
+  serverTimestamp: number    // epoch ms, when the feed was generated
+}
+
+/**
+ * Fetch the GTFS-RT protobuf feed and extract per-stop predictions
+ * for the given trip. Returns predictions + the feed's server timestamp.
+ */
+export async function fetchProtobufTripPredictions(tripId: string): Promise<ProtobufSnapshot> {
+  // Protobuf endpoint is under /api/, not /api/where/
+  const base = 'https://api.pugetsound.onebusaway.org/api'
+  const url = `${base}/gtfs_realtime/trip-updates-for-agency/${AGENCY}.pb?key=${OBA_KEY}`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`protobuf ${res.status}`)
+  const buffer = await res.arrayBuffer()
+
+  const FeedMessage = getFeedType()
+  const feed = FeedMessage.decode(new Uint8Array(buffer))
+
+  const serverTimestamp = Number(feed.header?.timestamp ?? 0) * 1000
+
+  // Strip agency prefix from tripId to match protobuf format
+  const rawTripId = tripId.includes('_') ? tripId.split('_')[1] : tripId
+
+  const map = new Map<string, ProtoStopPrediction>()
+  for (const entity of feed.entity ?? []) {
+    const tu = entity.tripUpdate
+    if (!tu) continue
+    const trip = tu.trip
+    if (!trip || trip.tripId !== rawTripId) continue
+    for (const stu of tu.stopTimeUpdate ?? []) {
+      const arr = stu.arrival
+      const dep = stu.departure
+      const arrTime = arr?.time ? Number(arr.time) * 1000 : 0
+      const depTime = dep?.time ? Number(dep.time) * 1000 : 0
+      if (arrTime || depTime) {
+        map.set(stu.stopId, {
+          stopId: stu.stopId,
+          predictedArrival: arrTime || depTime,
+          predictedDeparture: depTime || arrTime,
+        })
+      }
+    }
+    break // found our trip
+  }
+  return { predictions: map, serverTimestamp }
+}
 
 // ── Arrivals for a stop ──
 export async function fetchArrivals(stopId: string): Promise<ArrivalDeparture[]> {

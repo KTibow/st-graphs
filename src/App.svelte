@@ -1,7 +1,7 @@
 <script lang="ts">
   import RoutePicker from './lib/RoutePicker.svelte'
   import {
-    fetchRouteShape, fetchTripsForRouteFull, fetchTripDetails, routeColor
+    fetchRouteShape, fetchTripsForRouteFull, fetchProtobufTripPredictions, routeColor
   } from './lib/api'
   import type { StopEntry, TripScheduleEntry } from './lib/types'
 
@@ -218,17 +218,19 @@
     const trip = selectedTrip
     if (!trip) return
     try {
-      const detail = await fetchTripDetails(trip.tripId)
-      const dev = detail.status?.scheduleDeviation ?? 0
-      const serviceDate = detail.serviceDate || trip.serviceDate
-      // Use the server's lastUpdateTime as the snapshot timestamp — that's when OBA
-      // actually computed these predictions. Using Date.now() would add noise from
-      // network latency and processing delay.
-      const snapshotTime = detail.status?.lastUpdateTime || Date.now()
+      const proto = await fetchProtobufTripPredictions(trip.tripId)
+      const serviceDate = trip.serviceDate
+      const snapshotTime = proto.serverTimestamp || Date.now()
+
       const stops = new Map<string, { predicted: number; scheduled: number; dev: number }>()
-      for (const st of detail.schedule?.stopTimes || []) {
+      for (const st of trip.schedule?.stopTimes || []) {
         const scheduled = serviceDate + st.arrivalTime * 1000
-        stops.set(st.stopId, { predicted: scheduled + dev * 1000, scheduled, dev })
+        // Match protobuf stop id (raw) against REST stop id (prefixed)
+        const rawStopId = st.stopId.includes('_') ? st.stopId.split('_')[1] : st.stopId
+        const pred = proto.predictions.get(rawStopId)
+        const predicted = pred ? pred.predictedArrival : scheduled
+        const dev = (predicted - scheduled) / 1000
+        stops.set(st.stopId, { predicted, scheduled, dev })
       }
       snapshots = [...snapshots, { t: snapshotTime, stops }]
     } catch (e) { console.error('poll', e) }
