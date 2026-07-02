@@ -27,15 +27,15 @@
 
   // ── Derived state ──
 
-  let selectedTrip = $derived(
-    selectedTripIdx >= 0 && trips[selectedTripIdx] ? trips[selectedTripIdx] : null
-  )
-
   let dirTrips = $derived.by(() => {
     if (selectedDir < 0 || !directions[selectedDir]) return []
     const ids = new Set(directions[selectedDir].stopIds)
     return trips.filter(t => t.schedule?.stopTimes?.some(s => ids.has(s.stopId)))
   })
+
+  let selectedTrip = $derived(
+    selectedTripIdx >= 0 && dirTrips[selectedTripIdx] ? dirTrips[selectedTripIdx] : null
+  )
 
   let trackedStops = $derived.by(() => {
     if (!selectedTrip || selectedDir < 0) return []
