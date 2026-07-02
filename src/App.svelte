@@ -300,16 +300,18 @@
           <div class="trip-radio-group">
             {#each dirTrips as t, i}
               {@const vid = t.status?.vehicleId ? t.status.vehicleId.split('_').pop()?.slice(-4) : t.tripId.slice(-4)}
+              {@const live = (t.status?.lastLocationUpdateTime ?? 0) > 0}
               {@const ns = t.status?.nextStop}
               {@const nsName = ns ? (allStops.get(ns)?.name || ns) : ''}
               {@const cs = t.status?.closestStop}
               {@const csName = cs ? (allStops.get(cs)?.name || cs) : ''}
               {@const dev = t.status?.scheduleDeviation}
               {@const phase = t.status?.phase || 'scheduled'}
-              <label class="trip-radio" class:active={selectedTripIdx === i}>
+              <label class="trip-radio" class:active={selectedTripIdx === i} class:ghost={!live}>
                 <input type="radio" name="trip" value={i} bind:group={selectedTripIdx} />
                 <span class="trip-radio-body">
                   <span class="trip-radio-head">
+                    <span class="trip-source" class:live>{live ? 'LIVE' : 'sched'}</span>
                     <span class="trip-vehicle">🚌 #{vid}</span>
                     <span class="trip-phase" class:late={dev && dev > 30} class:early={dev && dev < -30}>
                       {phase.replace('_', ' ')}
@@ -521,6 +523,16 @@
   .trip-next-label.dim { opacity: 0.5; }
   .trip-next-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
   .trip-radio-stops { color: var(--m3c-on-surface-variant); opacity: 0.6; }
+  .trip-source {
+    font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
+    letter-spacing: 0.5px;
+    background: var(--m3c-surface-container-high); color: var(--m3c-on-surface-variant);
+  }
+  .trip-source.live {
+    background: #1b5e20; color: #a5d6a7;
+  }
+  .trip-radio.ghost { opacity: 0.55; }
+  .trip-radio.ghost:hover { opacity: 0.8; }
   .trip-empty { padding: 12px; text-align: center; }
 
   .controls { padding: 8px 12px; border-bottom: 1px solid var(--m3c-outline-variant); display: flex; flex-direction: column; gap: 6px; }
